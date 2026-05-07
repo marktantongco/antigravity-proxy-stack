@@ -1,4 +1,4 @@
-name = "antigravity-proxy"
+name = "antigravity-proxy-stack"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
