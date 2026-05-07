@@ -2,5 +2,9 @@ name = "antigravity-proxy"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
+# Cloudflare Workers AI binding
+[[ai]]
+binding = "AI"
+
 [env.production]
 name = "antigravity-proxy-prod"
