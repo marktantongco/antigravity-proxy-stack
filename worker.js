@@ -1,6 +1,6 @@
 /**
  * Antigravity Proxy - Cloudflare Worker
- * API Gateway for Anthropic, OpenAI, Gemini
+ * API Gateway for Anthropic, OpenAI, Gemini, and Cloudflare AI
  */
 
 // CORS headers helper
@@ -23,10 +23,42 @@ async function handleRequest(request, env) {
     return new Response(JSON.stringify({
       status: 'ok',
       service: 'antigravity-proxy',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      endpoints: {
+        health: '/health',
+        anthropic: '/v1/messages',
+        openai: '/v1/chat/completions',
+        gemini: '/v1beta/',
+        cf_ai: '/ai/run/@cf/meta/llama-3.1-8b-instruct'
+      }
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
+  }
+  
+  // Route: Cloudflare AI - /ai/run/*
+  if (url.pathname.startsWith('/ai/run/')) {
+    try {
+      const model = url.pathname.replace('/ai/run/', '');
+      const body = await request.json();
+      
+      // Use Cloudflare Workers AI
+      const response = await env.AI.run(model, {
+        messages: body.messages || [{ role: 'user', content: body.prompt || '' }]
+      });
+      
+      return new Response(JSON.stringify(response), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    } catch (e) {
+      return new Response(JSON.stringify({
+        error: 'AI Error',
+        message: e.message
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
   }
   
   // Route: Anthropic (Claude) - /v1/messages
