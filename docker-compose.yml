@@ -1,0 +1,163 @@
+version: "3.8"
+
+services:
+  9router:
+    image: 9router:latest
+    container_name: 9router
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - ROUTER_MODE=proxy
+      - UPSTREAM_PROXY=${AG_PROXY_HOST}:${AG_PROXY_PORT}
+      - PROXY_TYPE=${AG_PROXY_TYPE}
+    networks:
+      - proxy-net
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - 9router
+      - ag-tools-ls
+      - ag-manager
+      - ag-proxy-ai
+      - opencode
+      - billing-proxy
+    networks:
+      - proxy-net
+
+  ag-tools-ls:
+    build:
+      context: ./ag-tools-ls
+      dockerfile: Dockerfile
+    container_name: ag-tools-ls
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - PROXY_HOST=${AG_PROXY_HOST}
+      - PROXY_PORT=${AG_PROXY_PORT}
+      - PROXY_TYPE=${AG_PROXY_TYPE}
+      - API_KEY=${AG_API_KEY}
+    networks:
+      - proxy-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  ag-manager:
+    image: antigravitymanager:latest
+    container_name: ag-manager
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - DB_PATH=/data/accounts.db
+      - PROXY_ENABLED=true
+      - PROXY_PORT=3000
+      - DISPLAY=:99
+    volumes:
+      - ag-manager-data:/data
+    networks:
+      - proxy-net
+    # Run with xvfb for headless Electron
+    command: >
+      sh -c "apk add --no-cache xvfb-run &&
+             xvfb-run -a --server-args='-screen 0 1280x720x24' npm start"
+
+  ag-proxy-ai:
+    build:
+      context: ./ag-proxy-ai
+      dockerfile: Dockerfile
+    container_name: ag-proxy-ai
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - PROXY_HOST=${AG_PROXY_HOST}
+      - PROXY_PORT=${AG_PROXY_PORT}
+      - PROXY_TYPE=${AG_PROXY_TYPE}
+      - API_KEY=${AG_API_KEY}
+      - CLAW_CODE_TOKEN=${AG_CLAW_CODE_TOKEN}
+      - VERCEL_AI_GATEWAY_API_KEY=${VERCEL_AI_GATEWAY_API_KEY}
+      - VERCEL_AI_GATEWAY_URL=${VERCEL_AI_GATEWAY_URL}
+    networks:
+      - proxy-net
+
+  opencode:
+    image: opencode-backend:latest
+    container_name: opencode
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - MODEL_ENDPOINT=https://claw-code.codes/api
+      - AUTH_TOKEN=${AG_CLAW_CODE_TOKEN}
+      - AG_PROXY_AI_URL=http://ag-proxy-ai:3002
+    networks:
+      - proxy-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - proxy-net
+    command: redis-server --appendonly yes
+
+  billing-proxy:
+    build:
+      context: ./billing-proxy
+      dockerfile: Dockerfile
+    container_name: billing-proxy
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - PORT=8081
+      - REDIS_URL=redis://redis:6379
+      - RATE_LIMIT=1000
+      - WINDOW_MS=3600000
+      - AG_PROXY_AI_URL=http://ag-proxy-ai:3002
+      - VERCEL_TOKEN=${VERCEL_TOKEN}
+      - VERCEL_AI_GATEWAY_API_KEY=${VERCEL_AI_GATEWAY_API_KEY}
+    depends_on:
+      - redis
+      - ag-proxy-ai
+    networks:
+      - proxy-net
+
+networks:
+  proxy-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  ag-manager-data:
+  redis-data:
